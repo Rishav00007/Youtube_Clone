@@ -103,3 +103,5 @@ userSchema.methods.generateRefreshToken = function(){ //Refresh token contains l
 }
 
 export const User = mongoose.model("User", userSchema);
+
+//hey i am rishav
