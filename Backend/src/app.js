@@ -20,4 +20,21 @@ app.use(express.static("public")) //for public static files like images
 
 app.use(cookieParser())
 
+//Routes importing
+
+import userRouter from './routes/user.routes.js';
+
+//routes declaration
+//we cant use app.get() here bcz it is used when we are not exportingg router
+//Now for declaring router we need to use middleware, so use app.use()
+
+//app.use("/users", userRouter)    //now on route /user we get redirect or give control to userRouter in user.routes.js then from there i can redirect to  registerUser using route /register
+//the path would be http://localhost8000/users/register
+//We can resuse this route users for every thing like login, register, etc.
+
+//Better production std route for user
+
+app.use("/api/v1/users", userRouter) 
+
+
 export { app }

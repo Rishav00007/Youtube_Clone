@@ -49,7 +49,7 @@ const app = express()
 //Second approach is to write everything about database in db/index.js and only import in index.js
 
 import connectDB from "./db/index.js";
-import app from "./app.js"
+import { app } from "./app.js"
 
 dotenv.config({
     path: './env'
@@ -57,7 +57,7 @@ dotenv.config({
 
 connectDB() //since connectDB is an asynchronous method it also return a promise, so we can put .then().catch()
 .then(() => {
-    application.listen(process.env.PORT || 8000, () => {
+    app.listen(process.env.PORT || 8000, () => {
         console.log(`Server is running at port : ${process.env.PORT}`);
     })
 })
