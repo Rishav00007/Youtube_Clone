@@ -52,7 +52,7 @@ import connectDB from "./db/index.js";
 import { app } from "./app.js"
 
 dotenv.config({
-    path: './env'
+    path: './.env'
 });
 
 connectDB() //since connectDB is an asynchronous method it also return a promise, so we can put .then().catch()
