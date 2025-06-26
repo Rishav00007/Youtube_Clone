@@ -1,7 +1,7 @@
-import { asyncHandler } from "../utils/asyncHandler";
-import { ApiError } from "../utils/ApiError";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { ApiError } from "../utils/ApiError.js";
 import jwt from "jsonwebtoken";
-import { User } from "../models/user.models";
+import { User } from "../models/user.models.js";
 
 //Note since below res is of new use, so somewhere it is written like this also {....async(req, _, next)....}
 export const verifyJWT = asyncHandler( async(req, res, next) => { //middleware to verify authentication

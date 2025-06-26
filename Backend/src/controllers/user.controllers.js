@@ -3,7 +3,8 @@ import {ApiError} from "../utils/ApiError.js"
 import { User } from "../models/user.models.js"
 import { uploadOnCloudinary } from  "../utils/cloudinary.js"
 import { ApiResponse } from "../utils/ApiResponse.js";
-
+import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
 
 const generateAccessAndRefreshTokens = async(userId) => {
     try {
@@ -138,7 +139,8 @@ const loginUser = asyncHandler( async (req, res) => {
     //username or email based access
 
     const {email, username, password} = req.body
-    if(!username || !email){
+    console.log(email);
+    if(!username && !email){ //or if(!(username || email))
         throw new ApiError(400, "Username or Email is required")
     }
 
@@ -220,13 +222,324 @@ const logoutUser = asyncHandler( async(req, res) => {
     return res
     .status(200)
     .clearCookie("accessToken", options) //method came from cookie-parser
-    .clearCookie("accessToken", options)
+    .clearCookie("refreshToken", options)
     .json(new ApiResponse(200, {}, "User logged Out"))//Empty response for mobile aplication
 
 });
+
+//so that user need not to login again and again
+const refreshAccessToken = asyncHandler( async (req, res) => {
+    const incomingRefreshToken = req.cookies.refreshToken || req.body.refreshToken //for mobile apps
+
+    if(!incomingRefreshToken){
+        throw new ApiError(401, "Unauthorized request"); //this is proper response to an Api error which is we sending
+    }
+
+    try {
+        //verify the token with token stored in our db
+        const decodedToken = jwt.verify(
+            incomingRefreshToken,
+            process.env.REFRESH_TOKEN_SECRET
+        )
+    
+        //using mongodb query
+        const user = await User.findById(decodedToken?._id)
+    
+        if(!user){
+            throw new ApiError(401, "Invalid refresh token")
+        }
+    
+        //Now matching both users
+        if(incomingRefreshToken !== user?.refreshToken){ //matches with the refreshToken which we save above while generating these tokens
+            throw new ApiError(401, "Refresh Token is expired or used") 
+        }
+    
+        //now generate latest access and refresh token
+        const options = {
+            httpOnly: true,
+            secure: true
+        }
+    
+        const {accessToken, newRefreshToken} = await generateAccessAndRefreshTokens(user._id)
+        return res
+        .status(200)
+        .cookie("accessToken", accessToken, options)
+        .cookie("refreshToken", newRefreshToken, options)
+        .json(
+            new ApiResponse(
+                200,
+                {accessToken, refreshToken: newRefreshToken},
+                "Access token refreshed"
+            )
+        )
+    } catch (error) {
+        throw new ApiError(401, error?.message || "Invalid refresh token")
+    }
+
+});
+
+const changeCurrentPassword = asyncHandler( async(req, res) => {
+    const {oldPassword, newPassword} = req.body //we can also take a confirm password  and put an if-else
+
+    const user = await User.findById(req.user?._id)
+    const isPasswordCorrect = await user.isPasswordCorrect(oldPassword) //this isPasswordCorrect() method is done using bcrypt in user.models.js where are we are matching the oldPassword given by user first with the initial encrypted password, so that he can get access to change the password
+
+    if (!isPasswordCorrect) { //old password not correct
+        throw new ApiError(400, "Invalid old password")
+    }
+
+    //changing new password
+    user.password = newPassword
+    await user.save({validateBeforeSave: false}) //to save new password
+
+    return res
+    .status(200)
+    .json(new ApiResponse(200, {}, "Password changed successfully"))
+
+});
+
+const getCurrentUser = asyncHandler( async (req, res) => {
+    return res //as we already run out middleware auth.middlewares.js
+    .status(200)
+    .json(new ApiResponse(200, req.user, "Current user fetched Successfully"))
+});
+
+//text data update
+const updateAccountDetails = asyncHandler( async(req, res) => {
+    const {fullName, email} = req.body
+
+    if(!fullName || !email){
+        throw new ApiError(400, "All fields are required")
+    }
+
+    const user = await User.findByIdAndUpdate(
+        req.user?._id,
+        {
+            $set: {
+                fullName, //or fullName: fullName
+                email: email
+            }
+        },
+        {new: true}
+        
+    ).select("-password")
+
+    return res
+    .status(200)
+    .json(new ApiResponse(200, user, "Account details updated successfully"))
+
+});
+
+
+//for any file (avatar or coverImage), update must keep an other separate endpoint/method and we use multer/middleware here
+const updateUserAvatar = asyncHandler( async(req, res) => {
+    const avatarLocalPath = req.file?.path; //no need to take .files here just req a file(avatar) to update
+    
+    if(!avatarLocalPath) {
+        throw new ApiError(400, "Avatar is missing")
+    }
+
+    const avatar = await uploadOnCloudinary(avatarLocalPath)
+
+    if(!avatar.url){
+        throw new ApiError(400, "Error while uploading on avatar")
+    }
+
+    //TODO:- delete old avatar image- assignment
+
+    const user = await User.findByIdAndUpdate(
+        req.user?._id,
+        {
+            $set:{
+                avatar: avatar.url
+            }
+        },
+        {new: true}
+    ).select("-password")
+
+    return res
+    .status(200)
+    .json(new ApiResponse(200, user, "Avatar updated successfully"))
+
+});
+
+const updateUserCoverImage = asyncHandler( async(req, res) => {
+    const coverImageLocalPath = req.file?.path; //no need to take .files here just req a file(avatar) to update
+    
+    if(!coverImageLocalPath) {
+        throw new ApiError(400, "Cover Image file is missing")
+    }
+
+    const coverImage = await uploadOnCloudinary(coverImageLocalPath)
+
+    if(!coverImage.url){
+        throw new ApiError(400, "Error while uploading on Cover Image")
+    }
+
+    const user = await User.findByIdAndUpdate(
+        req.user?._id,
+        {
+            $set:{
+                coverImage: coverImage.url
+            }
+        },
+        {new: true}
+    ).select("-password")
+
+    return res
+    .status(200)
+    .json(new ApiResponse(200, user, "Cover Image updated successfully"))
+
+});
+
+
+const getUserChannelProfile = asyncHandler( async(req, res) => {
+    const {username} = req.params
+
+    if(!username?.trim()){
+        throw new ApiError(400, "Username is missing")
+    }
+
+    const channel = await User.aggregate([ //aggregation pipeline gives values as an array of objects
+        {
+            $match: {
+                username: username?.toLowerCase() //to match username with given one and filter them out
+            }
+        },
+        {
+            $lookup: { //to find no. of subscribers of a channel
+                from: "subscriptions", //as our Subscription in schema get stored in lower case and plural i.e, subscriptions
+                localField: "_id",
+                foreignField: "channel",
+                as: "subscribers"
+            }
+        },
+        {
+            $lookup: { //to find no. of subscribers of a channel
+                from: "subscriptions", //as our Subscription in schema get stored in lower case and plural i.e, subscriptions
+                localField: "_id",
+                foreignField: "subscriber",
+                as: "subscribedTo"
+            }
+        },
+        {
+            //adding the two fields in user model
+            $addFields:{
+                subscribersCount: {
+                    $size: "$subscribers"
+                },
+                channelSubscribedToCount: {
+                    $size: "$subscribedTo"
+                },
+                isSubscribed: { //for button which show subscribed or subscribe on the frontend as we are sending a true/false value to the frontend
+                    $cond: {
+                        if: {$in: [req.user?._id, "$subscribers.subscriber"]},
+                        then: true,
+                        else: false
+                    }
+                }
+            }
+        },
+        {
+            $project: { //to not project every value to the user, only project selected values
+                fullName: 1,
+                username: 1,
+                subscribersCount: 1,
+                channelSubscribedToCount: 1,
+                isSubscribed: 1,
+                avatar: 1,
+                coverImage: 1,
+                email: 1 
+
+            }
+        }
+
+    ])
+
+    if(!channel?.length){
+        throw new ApiError(404, "Channel does not exists")
+    }
+
+    return res
+    .status(200)
+    .json(
+        new ApiResponse(200, channel[0], "User channel fetched successfully") //only giving first objct if channel as response
+    )
+});
+
+
+//To show watch history of the user, we need nested lookups (nested aggregation pipelines/ sub aggregation pipelines)
+//as we need one lookup to see video model from user model which contains watch History as videos get continuously added as a queue in watch history and then require another nested lookup from video to user to detect owner
+const getWatchHistory = asyncHandler( async(req, res) => {
+    //req.user._id //you may seems it generate a MongoDB id but it only generates a string and then mongoose converts into an object id of MongoDb like {_id: ObjectId('234fdvgfgdrg3242was12fcw4')}
+    const user = await User.aggregate([
+        {
+            $match: { //but during aggregation pipeline mongoose is not able to convert the string into Object id, we need to do it manually like below:-
+                _id: new mongoose.Types.ObjectId(req.user._id)
+            }
+            
+        },
+        {
+            $lookup: {
+                from: "videos",
+                localField: "watchHistory",
+                foreignField: "_id",
+                as: "watchHistory",
+                pipeline: [ //creating a second sub pipeline for owner field in videos
+                    {
+                        $lookup: {
+                            from: "users",
+                            localField: "owner",
+                            foreignField: "_id",
+                            as: "owner",
+                            pipeline: [ //another sub pipeline as we only req to project some details of owner not all
+                                {
+                                    $project: {
+                                        fullName: 1,
+                                        username: 1,
+                                        avatar: 1
+                                    }
+                                }
+
+                            ]
+                        }
+                    },
+                    {
+                        $addFields: { //as in owner field due to sub pipeline, we get values as array of object, so we only want to give only the first element of the array
+                            owner: { //not taking another value, overriding the owner value only
+                                $first: "$owner"
+                            }
+                        }//we can do this also as wriiten or also we can give full array to owner (both are correct)
+                    }
+                ]
+            }
+        }
+    ])
+
+    return res
+    .status(200)
+    .json(
+        new ApiResponse(
+            200, 
+            user[0].watchHistory,
+            "Watched history fetched successfully"
+        )
+    )
+
+});
+
 
 export { 
     registerUser,
     loginUser,
     logoutUser,
+    refreshAccessToken,
+    changeCurrentPassword,
+    getCurrentUser,
+    updateAccountDetails,
+    updateUserAvatar,
+    updateUserCoverImage,
+    getUserChannelProfile,
+    getWatchHistory
+
 }
